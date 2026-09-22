@@ -1,158 +1,164 @@
+import { useMemo, useState } from "react";
 import "./styles.css";
+import { useFollowUp } from "./state/useFollowUp";
+import { StatsBar } from "./components/StatsBar";
+import { PatientSidebar } from "./components/PatientSidebar";
+import { TimelineColumn } from "./components/Timeline";
+import { ExamForm } from "./components/ExamForm";
+import { ConflictPanel } from "./components/ConflictPanel";
 
-const project = {
-  "id": "hxwl-11",
-  "port": 5111,
-  "title": "眼科验光记录",
-  "subtitle": "视力、屈光参数与复查处方对比",
-  "stack": "React + Vite + TypeScript + CSS",
-  "theme": [
-    "#2563eb",
-    "#059669",
-    "#dc2626"
-  ],
-  "domain": "眼视光",
-  "users": [
-    "验光师",
-    "门店顾问",
-    "复查医生"
-  ],
-  "metrics": [
-    "近视进展",
-    "散光变化",
-    "复查提醒",
-    "处方数量"
-  ],
-  "filters": [
-    "儿童",
-    "成人",
-    "渐进片",
-    "角膜塑形镜"
-  ],
-  "fields": [
-    "裸眼视力",
-    "矫正视力",
-    "球镜",
-    "柱镜",
-    "轴位",
-    "瞳距",
-    "角膜曲率"
-  ],
-  "records": [
-    [
-      "Patient-032",
-      "儿童近视",
-      "复查",
-      "右眼-2.75DS，轴位180"
-    ],
-    [
-      "Patient-081",
-      "渐进片",
-      "初配",
-      "ADD +1.50，瞳高待确认"
-    ],
-    [
-      "Patient-144",
-      "散光",
-      "复查",
-      "柱镜变化0.50D"
-    ]
-  ]
-};
-
-const statusColors = ["status-ok", "status-watch", "status-danger"];
-
-function MetricCard({ label, value, index }: { label: string; value: string; index: number }) {
-  return (
-    <article className="metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <i className={statusColors[index % statusColors.length]} />
-    </article>
-  );
-}
+const RULES_TEXT = [
+  "唯一键：患者 + 日期 + 眼别，同日同眼仅保留一条",
+  "半年眼轴增长 > 0.20mm，或等效球镜下降 > 0.50D → 重点随访",
+  "不足半年的间隔按 182.625 天换算为半年当量后判定",
+  "触发重点随访须填写户外时长与处置计划，否则记为草稿",
+  "任何修改都新建带原因的版本，旧值保留在版本链",
+];
 
 function App() {
-  const values = project.metrics.map((metric: string, index: number) => {
-    const base = [84, 12, 31, 7][index % 4];
-    return String(base + index * 3);
-  });
+  const fu = useFollowUp();
+  const [selectedId, setSelectedId] = useState(fu.patients[0]?.id ?? "");
+  const [revisionId, setRevisionId] = useState<string | null>(null);
+  const [revisionReason, setRevisionReason] = useState("");
+  const [expandedVersion, setExpandedVersion] = useState<string | null>(null);
+
+  const timelines = fu.timelinesByPatient.get(selectedId);
+  const revisionExam = revisionId ? fu.getExam(revisionId) : undefined;
+
+  // 草稿眼次：对所有复查逐条跑规则，状态不入库、刷新后重算
+  const draftCount = useMemo(() => {
+    let n = 0;
+    for (const patientId of fu.timelinesByPatient.keys()) {
+      const tls = fu.timelinesByPatient.get(patientId)!;
+      (["OD", "OS"] as const).forEach((eye) => {
+        n += tls[eye].entries.filter((t) => t.risk.status === "draft").length;
+      });
+    }
+    return n;
+  }, [fu.timelinesByPatient]);
+
+  const startRevise = (id: string) => {
+    setRevisionId(id);
+    setRevisionReason("");
+    document.getElementById("exam-form")?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const cancelRevise = () => {
+    setRevisionId(null);
+    setRevisionReason("");
+  };
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">{project.id} · port {project.port}</p>
-          <h1>{project.title}</h1>
-          <p className="subtitle">{project.subtitle}</p>
+          <p className="eyebrow">hxwl-11 · 儿童近视进展随访台</p>
+          <h1>近视进展随访台</h1>
+          <p className="subtitle">
+            按患者、日期、眼别记录球镜、等效球镜与眼轴；时间线、风险等级与版本链均由规则实时派生，
+            数据 / 规则 / 页面三层分离。
+          </p>
+          <ul className="rules-list">
+            {RULES_TEXT.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
         </div>
         <div className="stack-card">
-          <span>技术栈</span>
-          <strong>{project.stack}</strong>
+          <span>分层结构</span>
+          <strong>
+            data/ 数据（localStorage + 唯一键 + 版本）
+            <br />
+            rules/ 规则（SE、半年化风险、时间线）
+            <br />
+            components/ 页面（录入、冲突、时间线）
+          </strong>
+          <button onClick={fu.reset}>重置为示例数据</button>
         </div>
       </section>
 
-      <section className="metrics-grid">
-        {project.metrics.map((metric: string, index: number) => (
-          <MetricCard key={metric} label={metric} value={values[index]} index={index} />
-        ))}
-      </section>
+      <StatsBar
+        summaries={fu.summaries}
+        totalExams={fu.summaries.reduce((n, s) => n + s.exams.length, 0)}
+        draftCount={draftCount}
+      />
+
+      {fu.notice && (
+        <div className={`notice notice-${fu.notice.type}`}>
+          <span>{fu.notice.text}</span>
+          <button onClick={() => fu.setNotice(null)} aria-label="关闭提示">✕</button>
+        </div>
+      )}
 
       <section className="workspace">
-        <aside className="panel narrow">
-          <h2>角色</h2>
-          <div className="chips">
-            {project.users.map((user: string) => (
-              <span key={user}>{user}</span>
-            ))}
-          </div>
-          <h2>筛选</h2>
-          <div className="chips muted">
-            {project.filters.map((filter: string) => (
-              <button key={filter}>{filter}</button>
-            ))}
-          </div>
-        </aside>
+        <PatientSidebar
+          summaries={fu.summaries}
+          selectedId={selectedId}
+          onSelect={(id) => {
+            setSelectedId(id);
+            cancelRevise();
+          }}
+        />
 
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p>{project.domain}</p>
-              <h2>记录字段</h2>
+        <div className="timelines" id="timelines">
+          {timelines ? (
+            <div className="timeline-grid">
+              <TimelineColumn
+                timeline={timelines.OD}
+                expandedId={expandedVersion}
+                onToggle={(id) => setExpandedVersion((v) => (v === id ? null : id))}
+                onRevise={startRevise}
+              />
+              <TimelineColumn
+                timeline={timelines.OS}
+                expandedId={expandedVersion}
+                onToggle={(id) => setExpandedVersion((v) => (v === id ? null : id))}
+                onRevise={startRevise}
+              />
             </div>
-            <button className="primary-action">新增记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
+          ) : (
+            <p className="empty-note">请选择左侧患者</p>
+          )}
+        </div>
       </section>
 
-      <section className="records panel">
-        <div className="section-heading">
-          <div>
-            <p>示例数据</p>
-            <h2>近期记录</h2>
-          </div>
-          <button>导出摘要</button>
-        </div>
-        <div className="record-list">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")} className="record-card">
-              <div className="record-index">{String(index + 1).padStart(2, "0")}</div>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+      {fu.conflict && (
+        <ConflictPanel
+          conflict={fu.conflict}
+          onRevise={() => {
+            startRevise(fu.conflict!.existing.id);
+            fu.dismissConflict();
+          }}
+          onDismiss={fu.dismissConflict}
+        />
+      )}
+
+      <div id="exam-form">
+        {revisionExam ? (
+          <ExamForm
+            key={`revise-${revisionExam.id}-${revisionExam.versions.length}`}
+            mode="revise"
+            exam={revisionExam}
+            reason={revisionReason}
+            onReasonChange={setRevisionReason}
+            patients={fu.patients}
+            timelinesByPatient={fu.timelinesByPatient}
+            onReviseAction={fu.revise}
+            onCancelRevise={cancelRevise}
+            onSubmitted={cancelRevise}
+          />
+        ) : (
+          <ExamForm
+            key={`add-${selectedId}`}
+            mode="add"
+            defaultPatientId={selectedId}
+            patients={fu.patients}
+            timelinesByPatient={fu.timelinesByPatient}
+            onAddAction={fu.add}
+            onSubmitted={() => undefined}
+          />
+        )}
+      </div>
     </main>
   );
 }
