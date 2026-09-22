@@ -1,158 +1,77 @@
+// 页面层：布局组装。数据（src/data）、规则（src/rules）、页面（src/pages）三层互不越界。
 import "./styles.css";
+import MetricsBar from "./pages/MetricsBar";
+import PatientSidebar from "./pages/PatientSidebar";
+import TimelineView from "./pages/TimelineView";
+import ExamForm from "./pages/ExamForm";
+import ConflictDialog from "./pages/ConflictDialog";
+import { useClinic } from "./pages/useClinic";
 
 const project = {
-  "id": "hxwl-11",
-  "port": 5111,
-  "title": "眼科验光记录",
-  "subtitle": "视力、屈光参数与复查处方对比",
-  "stack": "React + Vite + TypeScript + CSS",
-  "theme": [
-    "#2563eb",
-    "#059669",
-    "#dc2626"
-  ],
-  "domain": "眼视光",
-  "users": [
-    "验光师",
-    "门店顾问",
-    "复查医生"
-  ],
-  "metrics": [
-    "近视进展",
-    "散光变化",
-    "复查提醒",
-    "处方数量"
-  ],
-  "filters": [
-    "儿童",
-    "成人",
-    "渐进片",
-    "角膜塑形镜"
-  ],
-  "fields": [
-    "裸眼视力",
-    "矫正视力",
-    "球镜",
-    "柱镜",
-    "轴位",
-    "瞳距",
-    "角膜曲率"
-  ],
-  "records": [
-    [
-      "Patient-032",
-      "儿童近视",
-      "复查",
-      "右眼-2.75DS，轴位180"
-    ],
-    [
-      "Patient-081",
-      "渐进片",
-      "初配",
-      "ADD +1.50，瞳高待确认"
-    ],
-    [
-      "Patient-144",
-      "散光",
-      "复查",
-      "柱镜变化0.50D"
-    ]
-  ]
+  id: "hxwl-11",
+  port: 5111,
+  title: "儿童近视进展随访台",
+  subtitle: "按患儿、复查日期与眼别追踪球镜、等效球镜与眼轴；半年眼轴增长 > 0.20mm 或等效球镜下降 > 0.50D 自动转重点随访",
+  stack: "React + Vite + TypeScript + CSS（数据层 / 规则层 / 页面层分离）",
 };
 
-const statusColors = ["status-ok", "status-watch", "status-danger"];
-
-function MetricCard({ label, value, index }: { label: string; value: string; index: number }) {
-  return (
-    <article className="metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <i className={statusColors[index % statusColors.length]} />
-    </article>
-  );
-}
-
 function App() {
-  const values = project.metrics.map((metric: string, index: number) => {
-    const base = [84, 12, 31, 7][index % 4];
-    return String(base + index * 3);
-  });
+  const api = useClinic();
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">{project.id} · port {project.port}</p>
+          <p className="eyebrow">
+            {project.id} · port {project.port}
+          </p>
           <h1>{project.title}</h1>
           <p className="subtitle">{project.subtitle}</p>
         </div>
         <div className="stack-card">
-          <span>技术栈</span>
+          <span>技术栈与分层</span>
           <strong>{project.stack}</strong>
+          <span className="layer-note">
+            data：唯一键 + 版本链存储 · rules：阈值 / 风险 / 状态纯函数 ·
+            pages：时间线与表单
+          </span>
+          <button onClick={api.resetDemo}>重置演示数据</button>
         </div>
       </section>
 
-      <section className="metrics-grid">
-        {project.metrics.map((metric: string, index: number) => (
-          <MetricCard key={metric} label={metric} value={values[index]} index={index} />
-        ))}
+      <MetricsBar metrics={api.metrics} />
+
+      <section className="rule-strip panel">
+        <strong>随访规则</strong>
+        <span>
+          ① 患者 + 日期 + 眼别唯一，同日同眼只留一条；② 修改只能新建带原因版本，旧值保留；
+          ③ 与最近一次非草稿复查对比，变化量按 182.625 天折算半年速率；
+          ④ 眼轴 &gt; 0.20mm 或等效球镜下降 &gt; 0.50D 转重点随访，须填户外时长与处置计划，否则存草稿；
+          ⑤ 刷新后时间线、风险等级、版本链均从存储数据重算。
+        </span>
       </section>
 
       <section className="workspace">
-        <aside className="panel narrow">
-          <h2>角色</h2>
-          <div className="chips">
-            {project.users.map((user: string) => (
-              <span key={user}>{user}</span>
-            ))}
-          </div>
-          <h2>筛选</h2>
-          <div className="chips muted">
-            {project.filters.map((filter: string) => (
-              <button key={filter}>{filter}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p>{project.domain}</p>
-              <h2>记录字段</h2>
-            </div>
-            <button className="primary-action">新增记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="records panel">
-        <div className="section-heading">
-          <div>
-            <p>示例数据</p>
-            <h2>近期记录</h2>
-          </div>
-          <button>导出摘要</button>
-        </div>
-        <div className="record-list">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")} className="record-card">
-              <div className="record-index">{String(index + 1).padStart(2, "0")}</div>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
+        <PatientSidebar api={api} />
+        <div className="main-col">
+          {api.formMode && <ExamForm api={api} />}
+          {api.selected ? (
+            <TimelineView timeline={api.selected} api={api} />
+          ) : (
+            <section className="panel empty-state">
+              <h2>尚无患儿档案</h2>
+              <p>请先在左侧新增患儿，再录入复查数据。</p>
+            </section>
+          )}
         </div>
       </section>
+
+      <footer className="foot-note">
+        本地演示数据保存在浏览器 localStorage；刷新页面不会丢失，时间线 / 风险 /
+        版本链始终一致。
+      </footer>
+
+      <ConflictDialog doc={api.conflict} api={api} />
     </main>
   );
 }
